@@ -11,6 +11,7 @@ set(LIBGREAT_ARCHITECTURE arm-v7m)
 # TODO: do we want to use the hard-float ABI, or do we want to make these inter-linkable?
 set(FLAGS_PLATFORM                 -ffunction-sections -fdata-sections)
 set(FLAGS_MAIN_CPU                 -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16)
+set(FLAGS_MAIN_CPU                 -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=auto)
 set(FLAGS_SECONDARY_CPU            -mcpu=cortex-m0 -mfloat-abi=soft)
 
 # FIXME: move some of this to an arm-v7m archictecture file
