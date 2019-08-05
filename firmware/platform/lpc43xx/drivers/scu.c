@@ -11,7 +11,7 @@
 /**
  * @return a reference to the platform's SCU registers
  */
-static platform_scu_registers_t *platform_get_scu_registers(void)
+platform_scu_registers_t *platform_get_scu_registers(void)
 {
 	return (platform_scu_registers_t *)0x40086000;
 }

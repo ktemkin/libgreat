@@ -67,9 +67,20 @@ typedef volatile struct ATTR_PACKED {
 	// Special function select (SFS) registers for each of the multiplexed pins on the GPIO.
 	platform_scu_pin_group_registers_t group[16];
 
-	// TODO: add the registers for non-multiplexed special function pins
+	RESERVED_WORDS(256);
+
+	// Special function select (SFS) register for the clock pins.
+	platform_scu_pin_configuration_t clk[4];
+
+	// TODO: add the registers for the USB/ADC/EMC/SD/INT pins
 
 } platform_scu_registers_t;
+
+
+/**
+ * @return a reference to the platform's SCU registers
+ */
+platform_scu_registers_t *platform_get_scu_registers(void);
 
 
 /**

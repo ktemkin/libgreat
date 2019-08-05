@@ -523,6 +523,13 @@ void platform_disable_clock(platform_branch_clock_register_t *clock);
 
 
 /**
+ * Ensures the provided clock is active and can be used.
+ */
+int platform_enable_base_clock(platform_base_clock_register_t *base);
+
+
+
+/**
  * Set up the source for a provided generic base clock.
  *
  * @param clock The base clock to be configured.

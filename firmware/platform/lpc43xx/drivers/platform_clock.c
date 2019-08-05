@@ -205,9 +205,9 @@ ATTR_WEAK platform_base_clock_configuration_t clock_configs[] = {
 			.source = CLOCK_SOURCE_PRIMARY },
 	{ .name = "uart3",  .cgu_offset = CGU_OFFSET(uart3),  .ccu_region_offset = CCU_OFFSET(usart3),
 			.source = CLOCK_SOURCE_PRIMARY },
-	{ .name = "out",    .cgu_offset = CGU_OFFSET(out)   },
-	{ .name = "out0",   .cgu_offset = CGU_OFFSET(out0)  },
-	{ .name = "out1",   .cgu_offset = CGU_OFFSET(out1)  },
+	{ .name = "out",    .cgu_offset = CGU_OFFSET(out),  .source = CLOCK_SOURCE_DIVIDER_B_OUT   },
+	{ .name = "out0",   .cgu_offset = CGU_OFFSET(out0) },
+	{ .name = "out1",   .cgu_offset = CGU_OFFSET(out1),   },
 	{ .name = "audio",  .cgu_offset = CGU_OFFSET(audio), .ccu_region_offset = CCU_OFFSET(audio),
 		.source = CLOCK_SOURCE_PRIMARY_INPUT },
 
