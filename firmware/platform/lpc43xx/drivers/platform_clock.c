@@ -110,7 +110,7 @@ ATTR_WEAK platform_clock_source_configuration_t platform_clock_source_configurat
 
 	// Derived clocks -- including PLLs and dividiers.
 	[CLOCK_SOURCE_PLL0_USB]            = { .frequency = 480 * MHZ, .source = CLOCK_SOURCE_PRIMARY_INPUT },
-	[CLOCK_SOURCE_PLL0_AUDIO]          = {},
+	[CLOCK_SOURCE_PLL0_AUDIO]          = { .frequency = 26 * MHZ, .source = CLOCK_SOURCE_PRIMARY_INPUT},
 	[CLOCK_SOURCE_PLL1]                = { .frequency = 204 * MHZ, .source = CLOCK_SOURCE_PRIMARY_INPUT },
 	[CLOCK_SOURCE_DIVIDER_A_OUT]       = {},
 	[CLOCK_SOURCE_DIVIDER_B_OUT]       = {},
@@ -205,7 +205,7 @@ ATTR_WEAK platform_base_clock_configuration_t clock_configs[] = {
 			.source = CLOCK_SOURCE_PRIMARY },
 	{ .name = "uart3",  .cgu_offset = CGU_OFFSET(uart3),  .ccu_region_offset = CCU_OFFSET(usart3),
 			.source = CLOCK_SOURCE_PRIMARY },
-	{ .name = "out",    .cgu_offset = CGU_OFFSET(out),  .source = CLOCK_SOURCE_DIVIDER_B_OUT   },
+	{ .name = "out",    .cgu_offset = CGU_OFFSET(out),  .source = CLOCK_SOURCE_PLL0_AUDIO   },
 	{ .name = "out0",   .cgu_offset = CGU_OFFSET(out0) },
 	{ .name = "out1",   .cgu_offset = CGU_OFFSET(out1),   },
 	{ .name = "audio",  .cgu_offset = CGU_OFFSET(audio), .ccu_region_offset = CCU_OFFSET(audio),
@@ -1527,18 +1527,89 @@ static unsigned platform_identify_clock_frequency_mhz(clock_source_t source)
 }
 
 /**
- * Conigure the USB PLL to produce the freuqencies necessary to drive the platform's
- * various USB controllers.
+ * Configure the audio PLL to produce a desired frequency various USB controllers.
+ * // FIXME: support frequencies other than 12MHz in, 26MHz out
  */
 static int platform_bring_up_audio_pll(void)
 {
-	// TODO: Implement support for the audio PL.
-	pr_error("error: clock: audio PLL support not yet implemeneted!");
-	return ENOSYS;
+	const uint32_t audio_pll_target = 26 * MHZ;
+
+	// Constants for the specified frequency. From the NXP PLL calculator.
+	const uint32_t m_divider_constant = 2047;
+	const uint32_t n_divider_constant = 0;
+	const uint32_t p_divider_constant = 10;
+
+
+	// Time to wait for the  PLL to lock up.
+	const uint32_t pll_lock_timeout = 1000000; // 1 second; this should probably be made tweakable
+
+	platform_clock_generation_register_block_t *cgu = get_platform_clock_generation_registers();
+	uint32_t time_base;
+
+	// Get the clock that should be the basis for our frequency.
+	platform_clock_source_configuration_t *config = &platform_clock_source_configurations[CLOCK_SOURCE_PLL0_AUDIO];
+
+	// Ensure the relevant clock is up.
+	int rc = platform_handle_dependencies_for_clock_source(config->source);
+	if (rc) {
+		return rc;
+	}
+
+	// If the relevant clock is already up and okay, we're done!
+	if(platform_clock_source_is_configured(CLOCK_SOURCE_PLL0_AUDIO)) {
+		return 0;
+	}
+
+	// For now, ensure that we're trying to program a supported PLL frequency.
+	if (config->frequency != audio_pll_target) {
+		pr_error("error: cannot currently configure Audio PLLs to frequencies other than %" PRIu32, audio_pll_target);
+		return EINVAL;
+	}
+
+	// Power off the PLL for configuration.
+	cgu->pll_audio.core.powered_down = 1;
+	cgu->pll_audio.core.block_during_frequency_changes = 1;
+
+	// Configure the PLL's source.
+	cgu->pll_audio.core.source = platform_get_physical_clock_source(config->source);
+
+	// And apply the relevant PLL settings.
+	cgu->pll_audio.core.m_divider_encoded = m_divider_constant;
+	cgu->pll_audio.core.n_divider_coefficient = n_divider_constant;
+	cgu->pll_audio.core.p_divider_coefficient = p_divider_constant;
+
+	// Set up the PLL, per NXP's PLL calculator.
+	cgu->pll_audio.core.direct_input = 1;
+	cgu->pll_audio.core.direct_output = 0;
+	cgu->pll_audio.core.clock_enable = 1;
+	cgu->pll_audio.core.set_free_running = 0;
+
+	// We don't use the fractional divider, or its delta-sigma modulator.
+	cgu->pll_audio.core.audio_use_fractional_divider = 1;
+	cgu->pll_audio.core.audio_power_down_delta_sigma= 1;
+
+	// Turn the PLL on...
+	cgu->pll_audio.core.powered_down = 0;
+
+	// ... and wait for it to lock.
+	time_base = get_time();
+	while (!cgu->pll_audio.core.locked) {
+		if (get_time_since(time_base) > pll_lock_timeout) {
+
+			pr_error("error: PLL lock timed out (attempt %d)!\n", config->failure_count);
+			config->failure_count += 1;
+
+			return ETIMEDOUT;
+		}
+	}
+
+	// If we got here, we should be live!
+	cgu->pll_audio.core.bypassed = false;
+	return platform_verify_source_frequency(CLOCK_SOURCE_PLL0_AUDIO);
 }
 
 /**
- * Conigure the USB PLL to produce the freuqencies necessary to drive the platform's
+ * Configure the USB PLL to produce the frequencies necessary to drive the platform's
  * various USB controllers.
  */
 static int platform_bring_up_usb_pll(void)
@@ -2163,6 +2234,10 @@ void platform_initialize_clocks(void)
 	for (unsigned i = 0; i < ARRAY_SIZE(all_branch_clocks); ++i) {
 		platform_enable_branch_clock(all_branch_clocks[i], false);
 	}
+
+	// For now, set up PLL0AUDIO to generate 26MHz (a standard ULPI reference clock).
+	// We should really make this configurable.
+	platform_bring_up_audio_pll();
 
 	pr_info("System clock bringup complete.\n");
 }
