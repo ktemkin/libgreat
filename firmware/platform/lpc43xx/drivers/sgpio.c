@@ -13,6 +13,7 @@
 #include <drivers/scu.h>
 #include <drivers/sgpio.h>
 #include <drivers/platform_clock.h>
+#include <drivers/platform_reset.h>
 #include <drivers/arm_vectors.h>
 
 //#define pr_debug pr_info
@@ -811,7 +812,7 @@ static bool sgpio_attempt_to_double_direction_buffer_size(sgpio_t *sgpio, sgpio_
 		volatile sgpio_shift_config_register_t *shift_config = &sgpio->reg->shift_configuration[target_slice];
 
 		// If this element isn't the direction slice, copy the direction slice's properties to it.
-		if (target_slice != function->io_slice) {
+		if (target_slice != function->direction_slice) {
 			sgpio_copy_slice_properties(sgpio, target_slice, function->direction_slice);
 		}
 
@@ -1288,10 +1289,15 @@ int sgpio_enforce_all_shift_limits(sgpio_t *sgpio)
  */
 int sgpio_set_up_functions(sgpio_t *sgpio)
 {
+	platform_reset_register_block_t *reset = get_platform_reset_registers();
 	unsigned int optimization_passes = 0;
 
 	bool buffer_optimization_complete = false;
+	reset_select_t reset_select = { .sgpio_reset = 1};
 	int rc;
+
+	// Bring the SGPIO peripheral back to its clean state.
+	reset->reset_control = reset_select;
 
 	// First, ensure our SGPIO object has a reference to the right register bank.
 	sgpio->reg = platform_get_sgpio_registers();
@@ -1388,11 +1394,16 @@ void sgpio_run(sgpio_t *sgpio)
 		}
 	}
 
+	// Clear any leftover shift interrupts from previous operations.
+	// This is necessary to ensure we don't trigger a stray interrupt if one was pending
+	// at the end of the last run.
+	sgpio->reg->exchange_clock_interrupt.clear_status = 0xffff;
+
 
 	// Enable the SGPIO interrupt, if it's used.
 	if (interrupt_required) {
 		platform_mark_interrupt_serviced(SGPIO_IRQ);
-		platform_enable_interrupt(SGPIO_IRQ);
+		//platform_enable_interrupt(SGPIO_IRQ);  // XXX FIXME XXX
 	}
 	// Otherwise, disable it, just in case.
 	else {

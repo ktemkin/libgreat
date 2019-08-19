@@ -40,7 +40,7 @@ extern funcp_t __fini_array_start, __fini_array_end;
 extern unsigned _data_loadaddr, _data, _edata, _bss, _ebss, _stack;
 extern unsigned _text_segment_ram, _text_segment_rom;
 extern unsigned _text_segment_end, _text_segment_rom_end, _text_segment_ram_end;
-
+extern unsigned _m0_data_loadaddr, _m0_data, _m0_edata;
 
 /**
  * Function to be called before main, but after an initializers.
@@ -86,11 +86,28 @@ extern unsigned int debug_write_index;
 void set_up_cpu(void)
 {
 	// Enable access to the system's FPUs.
-	arch_enable_fpu(true);
+	//arch_enable_fpu(true);
 
 	// Enable the early clocks necessary for basic functionality.
 	platform_initialize_early_clocks();
 }
+
+
+/**
+ * Initializes the memory space used by our M0 processor.
+ */
+void initialize_m0_memory(void)
+{
+	volatile unsigned *src, *dest;
+
+	// Copy in the m0 data segments-- which, for now, also include the M0's text.
+	for (src = &_m0_data_loadaddr, dest = &_m0_data; dest < &_m0_edata; src++, dest++) {
+		*dest = *src;
+	}
+
+	// FIXME: also clear the M0's BSS, once it has one
+}
+
 
 
 /**
@@ -111,15 +128,18 @@ void ATTR_NORETURN reset_handler(void)
 		*dest++ = 0;
 	}
 
+	// Set up the area of memory allocated for use by the M0 processor.
+	initialize_m0_memory();
+
 	// Configure the CPU into its full running state.
 	set_up_cpu();
 
 	// Begin executing the program from RAM, instead of
-	// ROM, if desired. This improvides performance, as we
+	// ROM, if desired. This improves performance, as we
 	// don't have to keep fetching over SPIFI.
 	relocate_to_ram();
 
-	// Initilize the bare-bones early clocks.
+	// Initialize the bare-bones early clocks.
 	platform_initialize_early_clocks();
 
 	// Extremely early pre-init. This section is for initializer that

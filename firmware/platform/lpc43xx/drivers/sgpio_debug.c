@@ -418,3 +418,26 @@ void sgpio_dump_configuration(loglevel_t loglevel, sgpio_t *sgpio, bool include_
 		}
 	}
 }
+
+#define GET_RAW_REGISTER(name) \
+	*((uint32_t*)((uintptr_t)platform_get_sgpio_registers() + offsetof(platform_sgpio_registers_t, name)))
+#define DUMP_REGISTER(name) \
+	printk(loglevel, "%s: %08\n" PRIu32, #name, GET_RAW_REGISTER(name))
+
+
+void sgpio_dump_registers(loglevel_t loglevel, sgpio_t *sgpio)
+{
+	printk(loglevel, "--- SGPIO register dump --- \n");
+	printk(loglevel, "======================== \n");
+
+	DUMP_REGISTER(shift_configuration[0]);
+	DUMP_REGISTER(shift_configuration[1]);
+	DUMP_REGISTER(shift_configuration[2]);
+	DUMP_REGISTER(shift_configuration[3]);
+	DUMP_REGISTER(shift_configuration[4]);
+	DUMP_REGISTER(shift_configuration[5]);
+	DUMP_REGISTER(shift_configuration[6]);
+	DUMP_REGISTER(shift_configuration[7]);
+	DUMP_REGISTER(shift_configuration[8]);
+
+}
