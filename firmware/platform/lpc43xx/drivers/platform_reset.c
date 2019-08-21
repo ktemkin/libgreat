@@ -125,20 +125,31 @@ void platform_initialize_reset_driver(void)
 /**
  * Configures the M0 app (primary M0 processor) to run, and starts it.
  */
+void platform_halt_m0_core(void)
+{
+	platform_reset_register_block_t *rgu = get_platform_reset_registers();
+	reset_select_t reset_select = { .m0app_reset = 1 };
+
+	// Place the M0 into reset, and leave it there.
+	rgu->reset_control = reset_select;
+}
+
+
+/**
+ * Configures the M0 app (primary M0 processor) to run, and starts it.
+ */
 void platform_start_m0_core(void * m0_memory_base)
 {
 	platform_configuration_registers_t *creg = get_platform_configuration_registers();
 	platform_reset_register_block_t *rgu = get_platform_reset_registers();
+	reset_select_t reset_select = { .m0app_reset = 0 };
 
-	reset_select_t reset_select = { .m0app_reset = 1 };
-
-	// Place the M0 into reset ...
-	rgu->reset_control = reset_select;
+	// Ensure that the M0 is held in reset as we modify its base.
+	platform_halt_m0_core();
 
 	// Set the base for the M0 memory region...
 	creg->m0app_shadow_base = (volatile uint32_t)m0_memory_base;
 
 	// ... and bring it out of reset.
-	reset_select.m0app_reset = 0;
 	rgu->reset_control = reset_select;
 }

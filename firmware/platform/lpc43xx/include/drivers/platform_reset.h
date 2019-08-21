@@ -200,6 +200,12 @@ void platform_initialize_reset_driver(void);
 /**
  * Configures the M0 app (primary M0 processor) to run, and starts it.
  */
+void platform_halt_m0_core(void);
+
+
+/**
+ * Configures the M0 app (primary M0 processor) to run, and starts it.
+ */
 void platform_start_m0_core(void *m0_memory_base);
 
 #endif

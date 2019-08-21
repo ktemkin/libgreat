@@ -102,13 +102,10 @@ SECTIONS
 	_text_segment_ram_end = (. - ORIGIN(rom)) + ORIGIN(ram_local1);
 	_text_segment_rom_end = (. - ORIGIN(rom)) + ORIGIN(rom_flash);
 
-	.m0 : {
-		_m0_data_loadaddr = .;
-		*(.m0*)
-		_m0_edata_loadaddr = .;
-	} >rom
-	PROVIDE(_m0_data = ORIGIN(ram_m0));
-	_m0_edata = ORIGIN(ram_m0) + (_m0_edata_loadaddr - _m0_data_loadaddr);
+
+	/* layout of the m0 RAM region, for the loadables API */
+	_m0_data_region      = ORIGIN(ram_m0);
+	_m0_data_region_size = LENGTH(ram_m0);
 
 
 	. = ORIGIN(ram_local2);
