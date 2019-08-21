@@ -313,18 +313,32 @@ static int sgpio_set_up_clocking(sgpio_t *sgpio, sgpio_function_t *function, uin
 
 	// Finally, compute the local shift clock parameters, if the shift clock is used.
 	if (clock_source_type == SGPIO_CLOCK_SOURCE_TYPE_LOCAL) {
+
 		platform_clock_control_register_block_t *ccu = get_platform_clock_control_registers();
 		uint32_t sgpio_clock_frequency = platform_get_branch_clock_frequency(&ccu->periph.sgpio);
+		uint32_t clock_divider;
 
-		// Compute the shift clock divider, based on the current branch clock frequency.
-		// TODO: do we want to round, here?
-		uint32_t clock_divider = sgpio_clock_frequency / function->shift_clock_frequency;
+		// If the frequency has been defined as zero, we take this to mean "as fast as possible" --
+		// i.e. at the undivided rate of the SGPIO clock.
+		if (function->shift_clock_frequency == 0) {
 
-		// If we couldn't figure out a clock divider, bail out!
-		if (clock_divider == 0) {
-			pr_error("error: sgpio slice %d: could not meet timing! could not produce a %" PRIu32 " clock from a %"
-			          PRIu32 " input clock.\n", function->shift_clock_frequency, sgpio_clock_frequency);
-			return EINVAL;
+			// This is trivial; we just use a divider of one. :)
+			clock_divider = 1;
+		}
+
+		// In all other cases, we'll have to figure out a clock divider.
+		else {
+
+			// Compute the shift clock divider, based on the current branch clock frequency.
+			// TODO: do we want to round, here?
+			clock_divider = sgpio_clock_frequency / function->shift_clock_frequency;
+
+			// If we couldn't figure out a clock divider, bail out!
+			if (clock_divider == 0) {
+				pr_error("error: sgpio slice %c: could not meet timing! could not produce a %" PRIu32 " clock from a %"
+						PRIu32 " input clock.\n", slice + 'A', function->shift_clock_frequency, sgpio_clock_frequency);
+				return EINVAL;
+			}
 		}
 
 		// Set up counter that will generate the relevant clock.
