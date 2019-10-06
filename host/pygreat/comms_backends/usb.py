@@ -10,14 +10,69 @@ devices over USB.
 from __future__ import absolute_import
 from future import utils as future_utils
 
-import usb
+import sys
+
+import usb1
 import time
 import errno
+import array
+import atexit
 import struct
 import platform
 
+
 from ..comms import CommsBackend
 from ..errors import DeviceNotFoundError
+
+
+class USBCompatibilityWrapper:
+    """ Compatibility shim that makes python-libusb1 devices behave like pyUSB ones. """
+
+    def __init__(self, device):
+        """ Creates a new wrapper around the given python-libusb1 device.
+
+        Parameters:
+            device -- The libusb1 device to wrap. This method will expose both its
+                      methods and a few pyusb compatibility methods.
+        """
+
+        # Store the libusb device handle.
+        self._device = device
+
+
+    def ctrl_transfer(self, bmRequestType, bRequest, wValue=0, wIndex=0, data_or_wLength=None, timeout=1000):
+        """ Compatibility method for pyusb's USBDevice.ctrl_transfer. See its documentation. """
+
+        if bmRequestType & usb1.ENDPOINT_IN:
+            return self._device.controlRead(bmRequestType, bRequest, wValue, wIndex, data_or_wLength, timeout)
+        else:
+            return self._device.controlWrite(bmRequestType, bRequest, wValue, wIndex, data_or_wLength, timeout)
+
+
+    def read(self, endpoint, size, timeout=1000):
+        """ Compatibility method for pyusb's USBDevice.read. See its documentation. """
+
+        # If we have an endpoint address, convert it to an endpoint number.
+        endpoint_number = endpoint & 0x7F
+
+        # Perform the actual transaction.
+        return self._device.bulkRead(endpoint_number, size, timeout)
+
+
+    def write(self, endpoint, data, timeout=1000):
+        """ Compatibility method for pyusb's USBDevice.read. See its documentation. """
+        return self._device.bulkWrite(endpoint, data, timeout)
+
+
+    def __dir__(self):
+        """ Proxy our dir method to the inner device explicitly. """
+        return dir(self._device)
+
+
+    def __getattr__(self, attr):
+        """ Proxy most methods / properties directly to our inner device. """
+        return getattr(self._device, attr)
+
 
 
 class USBCommsBackend(CommsBackend):
@@ -25,6 +80,16 @@ class USBCommsBackend(CommsBackend):
     Class representing an abstract communications channel used to
     connect with a libgreat board.
     """
+
+    """ Class variable that stores our global libusb library context. """
+    context = None
+
+
+    """ The configuration number for libgreat interfaces. """
+    LIBGREAT_CONFIGURATION = 1
+
+    """ The interface number for the libgreat command interface. """
+    LIBGREAT_COMMAND_INTERFACE = 0
 
     """ The request number for issuing vendor-request encapsulated libgreat commands. """
     LIBGREAT_REQUEST_NUMBER = 0x65
@@ -48,7 +113,7 @@ class USBCommsBackend(CommsBackend):
 
 
     """
-    A flag passed to command execution that indicates we exepect no response, and don't need to wait
+    A flag passed to command execution that indicates we expect no response, and don't need to wait
     for anything more than the initial ACK.
     """
     LIBGREAT_FLAG_SKIP_RESPONSE = (1 << 0)
@@ -59,6 +124,77 @@ class USBCommsBackend(CommsBackend):
     from a previous iteration. See execute_raw_command for documentation.
     """
     LIBGREAT_FLAG_REPEAT_LAST = (1 << 1)
+
+
+    @classmethod
+    def _get_libusb_context(cls):
+        """ Retrieves the libusb context we'll use to fetch libusb device instances. """
+
+        # If we don't have a libusb context, create one.
+        if cls.context is None:
+            cls.context = usb1.USBContext().__enter__()
+            atexit.register(cls._destroy_libusb_context)
+
+        return cls.context
+
+
+
+    @classmethod
+    def _destroy_libusb_context(cls):
+        """ Destroys our libusb context on closing our python instance. """
+        cls.context._exit()
+        cls.context = None
+
+    @classmethod
+    def _device_matches_identifiers(cls, device, device_identifiers):
+
+        property_fetchers = {
+            'idVendor':       device.getVendorID,
+            'idProduct':      device.getProductID,
+            'serial_number':  device.getSerialNumber,
+            'bus':            device.getBusNumber,
+            'address':        device.getDeviceAddress,
+         }
+
+        # Check for a match on each of our properties.
+        for identifier, fetcher in property_fetchers.items():
+
+            # If we have a constraint on the given identifier, check to make sure
+            # it matches our requested value...
+            if identifier in device_identifiers:
+                if device_identifiers[identifier] != fetcher():
+
+                    # ... and return False if it doesn't.
+                    return False
+
+        # If we didn't fail to meet any constraints, return True.
+        return True
+
+
+    @classmethod
+    def _find_device(cls, device_identifiers, find_all=False):
+        """ Finds a USB device by its identifiers. See __init__ for their definitions. """
+
+        matching_devices = []
+        context = cls._get_libusb_context()
+
+
+        # Search our list of devices until we find one that matches each of our identifiers.
+        for device in context.getDeviceList():
+
+            # If it matches all of our properties, add it to our list.
+            if cls._device_matches_identifiers(device, device_identifiers):
+                matching_devices.append(device)
+
+        # If we have find_all, return all relevant devices...
+        if find_all:
+            return matching_devices
+
+        # otherwise, return the first found device, or None if we haven't found any.
+        elif matching_devices:
+            return matching_devices[0]
+        else:
+            return None
 
 
     # TODO: handle providing board "URIs", like "usb;serial_number=0x123",
@@ -78,21 +214,15 @@ class USBCommsBackend(CommsBackend):
         if 'serial_number' in device_identifiers and len(device_identifiers['serial_number']) < 32:
             device_identifiers['serial_number'] = device_identifiers['serial_number'].zfill(32)
 
-        # Connect to the first available device.
-        try:
-            self.device = usb.core.find(**device_identifiers)
-        except usb.core.USBError as e:
-            # On some platforms, providing identifiers that don't match with any
-            # real device produces a USBError/Pipe Error. We'll convert it into a
-            # DeviceNotFoundError.
-            if e.errno == errno.EPIPE:
-                raise DeviceNotFoundError()
-            else:
-                raise e
+        # Connect to the first device that matches our identifiers.
+        device = self._find_device(device_identifiers)
 
         # If we couldn't find a board, bail out early.
-        if self.device is None:
+        if device is None:
             raise DeviceNotFoundError()
+
+        # Open the device, and get a libusb device handle.
+        self.device = USBCompatibilityWrapper(device.open())
 
         # For now, supported boards provide a single configuration, so we
         # can accept the first configuration provided. If the device isn't
@@ -102,8 +232,8 @@ class USBCommsBackend(CommsBackend):
         # doesn't support this, and macOS considers setting the device's configuration
         # grabbing an exclusive hold on the device. Both set the configuration for us,
         # so this is skipped.
-        if not self.device.get_active_configuration():
-            self.device.set_configuration()
+        if not self.device.getConfiguration():
+            self.device.setConfiguration(self.LIBGREAT_CONFIGURATION)
 
         # Start off with no knowledge of the device's state.
         self._last_command_arguments = None
@@ -138,19 +268,15 @@ class USBCommsBackend(CommsBackend):
 
         while True:
             try:
-                usb.util.claim_interface(self.device, 0)
+                self.device.claimInterface(self.LIBGREAT_COMMAND_INTERFACE)
                 return
-            except usb.core.USBError as e:
 
-                # If we have EBUSY (linux) or EACCES (macos), or None (windows), try again.
-                if e.errno in (errno.EBUSY, errno.EACCES, None):
-                    pass
-                else:
-                    raise
+            # If the interface is already in use, repeat until we get the interface, or we time out.
+            except (usb1.USBErrorAccess, usb1.USBErrorBusy):
+                pass
 
             if time.time() > timeout:
                 raise IOError("timed out trying to claim access to a libgreat device!")
-
 
 
     def _release_libgreat_interface(self, maintain_exclusivity=True):
@@ -168,8 +294,7 @@ class USBCommsBackend(CommsBackend):
             return
 
         # Release our control over interface #0.
-        usb.util.release_interface(self.device, 0)
-
+        self.device.releaseInterface(self.LIBGREAT_COMMAND_INTERFACE)
 
 
     def get_exclusive_access(self):
@@ -210,9 +335,10 @@ class USBCommsBackend(CommsBackend):
         For OUT requests:
             length_or_data -- The data to be sent to the device.
         """
-        return self.device.ctrl_transfer(
-            direction | usb.TYPE_VENDOR | usb.RECIP_DEVICE,
-            request, value, index, length_or_data, timeout)
+        if direction:
+            return self._vendor_request_in(request, length_or_data, value, index, timeout)
+        else:
+            return self._vendor_request_out(request, value, index, length_or_data, timeout)
 
 
     def _vendor_request_in(self, request, length, value=0, index=0, timeout=1000):
@@ -223,8 +349,10 @@ class USBCommsBackend(CommsBackend):
                 a constant from the protocol.vendor_requests module.
             length -- The length of the data expected in response from the request.
         """
-        return self._vendor_request(usb.ENDPOINT_IN, request, length,
-            value=value, index=index, timeout=timeout)
+        return bytes(self.device.controlRead(
+            usb1.TYPE_VENDOR | usb1.RECIPIENT_DEVICE,
+            request, value, index, length, timeout
+        ))
 
 
     def _vendor_request_in_string(self, request, length=255, value=0, index=0, timeout=1000,
@@ -238,9 +366,8 @@ class USBCommsBackend(CommsBackend):
                 a constant from the protocol.vendor_requests module.
             length -- The length of the data expected in response from the request.
         """
-        raw = self._vendor_request(usb.ENDPOINT_IN, request, length_or_data=length,
-            value=value, index=index, timeout=timeout)
-        return raw.tostring().encode(encoding, errors='ignore')
+        raw = self._vendor_request_in(request, length, value, index, timeout)
+        return raw.encode(encoding, errors='ignore')
 
 
     def _vendor_request_out(self, request, value=0, index=0, data=None, timeout=1000):
@@ -251,8 +378,10 @@ class USBCommsBackend(CommsBackend):
                 a constant from the protocol.vendor_requests module.
             value -- The value to be passed to the vendor request.
         """
-        return self._vendor_request(usb.ENDPOINT_OUT, request, value=value,
-            index=index, length_or_data=data, timeout=timeout)
+        return self.controlWrite(
+            usb1.TYPE_VENDOR | usb1.RECIPIENT_DEVICE,
+            request, value, index, data, timeout
+        )
 
 
     @staticmethod
@@ -348,8 +477,7 @@ class USBCommsBackend(CommsBackend):
                     # Set the FLAG_SKIP_RESPONSE flag if we don't expect a response back from the device.
                     flags = self.LIBGREAT_FLAG_SKIP_RESPONSE if skip_reading_response else 0
 
-                    self.device.ctrl_transfer(
-                        usb.ENDPOINT_OUT | usb.TYPE_VENDOR | usb.RECIP_ENDPOINT,
+                    self.device.controlWrite(usb1.TYPE_VENDOR | usb1.RECIPIENT_ENDPOINT,
                         self.LIBGREAT_REQUEST_NUMBER, self.LIBGREAT_VALUE_EXECUTE, flags, to_send, timeout)
 
                     # If we're skipping reading a response, return immediately.
@@ -365,16 +493,16 @@ class USBCommsBackend(CommsBackend):
                     max_response_length = self.LIBGREAT_MAX_COMMAND_SIZE
 
                 # ... and read any response the device has prepared for us.
-                response = self.device.ctrl_transfer(
-                    usb.ENDPOINT_IN | usb.TYPE_VENDOR | usb.RECIP_ENDPOINT,
+                response = self.device.controlRead(usb1.TYPE_VENDOR | usb1.RECIPIENT_ENDPOINT,
                     self.LIBGREAT_REQUEST_NUMBER, self.LIBGREAT_VALUE_EXECUTE, flags, max_response_length, comms_timeout)
+                response = bytes(response)
 
                 # If we were passed an encoding, attempt to decode the response data.
                 if encoding and response:
-                    response = response.tostring().decode(encoding, errors='ignore')
+                    response = response.decode(encoding, errors='ignore')
 
                 # Return the device's response.
-                return response.tostring()
+                return response
 
             except Exception as e:
 
@@ -383,8 +511,7 @@ class USBCommsBackend(CommsBackend):
 
                 # If we got a pipe error, this indicates the device issued a realerror,
                 # and we should convert this into a failed command error.
-                is_signaled_error = \
-                isinstance(e, usb.core.USBError) and (e.errno == errno.EPIPE)
+                is_signaled_error = isinstance(e, usb1.USBErrorPipe)
 
                 # If this was an error raised on the device side, covert it to a CommandFailureError.
                 if is_signaled_error and rephrase_errors:
@@ -408,8 +535,8 @@ class USBCommsBackend(CommsBackend):
         self._last_command_arguments = None
 
         # Create a quick function to issue the abort request.
-        execute_abort = lambda device : device.ctrl_transfer(
-                usb.ENDPOINT_IN | usb.TYPE_VENDOR | usb.RECIP_ENDPOINT,
+        execute_abort = lambda device : device.controlRead(
+                usb1.TYPE_VENDOR | usb1.RECIPIENT_ENDPOINT,
                 self.LIBGREAT_REQUEST_NUMBER, self.LIBGREAT_VALUE_CANCEL, 0,
                 self.LIBGREAT_ERRNO_SIZE, timeout)
 
@@ -426,12 +553,13 @@ class USBCommsBackend(CommsBackend):
         # Parse the value returned from the request, which may be an error code.
         return struct.unpack("<I", result)[0]
 
+
     def close(self):
         """
         Dispose resources allocated by this connection.  This connection
         will no longer be usable.
         """
-        usb.util.dispose_resources(self.device)
+        self.device.close()
 
 
     def still_connected(self):
@@ -440,7 +568,22 @@ class USBCommsBackend(CommsBackend):
         USB_ERROR_NO_SUCH_DEVICE = 19
 
         try:
-            self.device.is_kernel_driver_active(0)
+            self.device.clearHalt()
             return True
-        except usb.core.USBError as e:
-            return e.errno != USB_ERROR_NO_SUCH_DEVICE
+        except usb1.USBErrorNotFound:
+            return True
+        except usb1.USBErrorNoDevice:
+            return False
+
+
+    def handle_events(self):
+        """
+        Performs any computations necessary to perform background processing of asynchronous communications.
+        Should be called periodically when asynchronous transfers are used.
+        """
+        self._get_libusb_context().handleEvents()
+
+
+    def __del__(self):
+        """ Cleans up any hanging USB context before closing. """
+        self.device.close()

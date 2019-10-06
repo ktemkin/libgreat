@@ -8,6 +8,7 @@ Module containing the core definitions for a libgreat-driven board.
 
 # FIXME: remove dependencies
 import usb
+import usb1
 import future
 import time
 
@@ -336,7 +337,7 @@ class GreatBoard(object):
 
         try:
             self.apis.core.request_reset(reset_command)
-        except usb.core.USBError:
+        except usb1.libusb1.USBError:
             pass
 
         # If we're to attempt a reconnect, do so.
