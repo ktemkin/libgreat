@@ -38,17 +38,20 @@ typedef volatile struct ATTR_PACKED {
 	uint32_t etbcfg;
 
 	// CREG6
-	struct {
-		uint32_t ethmode            :  3;
-		uint32_t                    :  1;
-		uint32_t ctoutctrl          :  1;
-		uint32_t                    :  7;
-		uint32_t i2s0_tx_sck_in_sel :  1;
-		uint32_t i2s0_rx_sck_in_sel :  1;
-		uint32_t i2s1_tx_sck_in_sel :  1;
-		uint32_t i2s1_rx_sck_in_sel :  1;
-		uint32_t emc_clk_sel        :  1;
-		uint32_t                    : 15;
+	union {
+		uint32_t creg6;
+		struct {
+			uint32_t ethmode            :  3;
+			uint32_t                    :  1;
+			uint32_t ctoutctrl          :  1;
+			uint32_t                    :  7;
+			uint32_t i2s0_tx_sck_in_sel :  1;
+			uint32_t i2s0_rx_sck_in_sel :  1;
+			uint32_t i2s1_tx_sck_in_sel :  1;
+			uint32_t i2s1_rx_sck_in_sel :  1;
+			uint32_t emc_clk_sel        :  1;
+			uint32_t                    : 15;
+		};
 	};
 
 	uint32_t m4txevent;

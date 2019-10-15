@@ -84,7 +84,7 @@ typedef struct ATTR_PACKED {
 	uint16_t halt_sct                               : 1;
 	uint16_t clear_counter_value                    : 1;
 	uint16_t counter_switches_direction_on_overflow : 1;
-	uint16_t count_prescalar                        : 8;
+	uint16_t count_prescaler                        : 8;
 	uint16_t                                        : 3;
 } sct_control_register_t;
 
@@ -101,8 +101,8 @@ typedef volatile struct ATTR_PACKED {
 	struct {
 		uint32_t use_both_halves_as_one            : 1;
 		uint32_t clock_mode                        : 2;
-		uint32_t clock_input_number                : 3;
 		uint32_t clock_on_falling_edges            : 1;
+		uint32_t clock_input_number                : 3;
 		uint32_t prevent_lower_half_from_reloading : 1;
 
 		uint32_t prevent_upper_half_from_reloading : 1;
@@ -169,7 +169,7 @@ typedef volatile struct ATTR_PACKED {
 	 * Register that controls whether we should perform a capture when a given
 	 * event occurs.
 	 */
-	split_register_t capture_on_event;
+	split_register_t use_register_for_capture;
 
 	/**
 	 * Raw control over each of the output pins.
@@ -218,7 +218,7 @@ typedef volatile struct ATTR_PACKED {
 	 */
 	union {
 		split_register_t reset_on_event[16];
-		split_register_t captures_on_event[16];
+		split_register_t capture_on_events[16];
 	};
 
 	RESERVED_WORDS(16);
